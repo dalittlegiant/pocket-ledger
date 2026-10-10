@@ -5,6 +5,10 @@ A completely free, zero-cost, **offline-first** personal finance PWA.
 - **No backend, no cloud, no accounts** — all data lives in IndexedDB on your device (via Dexie.js).
 - **Stack:** Vite + React + TypeScript + Tailwind CSS + Dexie.js + Zustand + vite-plugin-pwa.
 
+> 🤖 **AI developers:** read [`DEVELOPER_GUIDE.md`](./DEVELOPER_GUIDE.md) before changing
+> anything — it documents the architecture, database schema, core mechanisms
+> (auto-sync, SMS bridge, backup/restore), and the invariants you must not break.
+
 ## Run it locally
 
 ```bash
