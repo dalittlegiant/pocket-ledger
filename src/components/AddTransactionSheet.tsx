@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { db, type TxnKind } from '../db'
 import { useUIStore } from '../store'
-import { MOCK_ACCOUNTS, MOCK_CATEGORIES, toMinorUnits } from '../lib/catalog'
+import { toMinorUnits } from '../lib/format'
 
 const KINDS: { id: TxnKind; label: string }[] = [
   { id: 'expense', label: 'Expense' },
@@ -40,6 +41,8 @@ function Pill({
 export default function AddTransactionSheet() {
   const isOpen = useUIStore((s) => s.isAddTxnModalOpen)
   const close = useUIStore((s) => s.closeAddTxn)
+  const prefill = useUIStore((s) => s.txnPrefill)
+  const setTxnPrefill = useUIStore((s) => s.setTxnPrefill)
 
   // Mount/unmount with slide animation
   const [mounted, setMounted] = useState(false)
@@ -55,45 +58,81 @@ export default function AddTransactionSheet() {
     return () => clearTimeout(t)
   }, [isOpen])
 
+  // Live data from Dexie
+  const accounts = useLiveQuery(() => db.accounts.toArray(), [])
+  const categories = useLiveQuery(() => db.categories.toArray(), [])
+  const activeAccounts = useMemo(() => (accounts ?? []).filter((a) => !a.isArchived), [accounts])
+
   // Form state
   const [kind, setKind] = useState<TxnKind>('expense')
   const [amount, setAmount] = useState('')
-  const [categoryId, setCategoryId] = useState<number>(1)
-  const [accountId, setAccountId] = useState<number>(1)
-  const [toAccountId, setToAccountId] = useState<number>(2)
+  const [accountId, setAccountId] = useState<number | undefined>(undefined)
+  const [categoryId, setCategoryId] = useState<number | undefined>(undefined)
+  const [toAccountId, setToAccountId] = useState<number | undefined>(undefined)
   const [note, setNote] = useState('')
   const [saving, setSaving] = useState(false)
 
+  // One-shot prefill from the iOS Shortcuts SMS bridge: when the sheet opens
+  // with a pending prefill, apply it and consume it immediately.
+  useEffect(() => {
+    if (isOpen && prefill) {
+      setAmount(prefill.amount)
+      setNote(prefill.note)
+      setTxnPrefill(null)
+    }
+  }, [isOpen, prefill, setTxnPrefill])
+
   const isTransfer = kind === 'transfer'
-  const visibleCategories = MOCK_CATEGORIES.filter((c) => c.kind === kind)
+  const visibleCategories = useMemo(
+    () =>
+      (categories ?? [])
+        .filter((c) => !c.isArchived && c.kind === kind)
+        .sort((a, b) => a.sortOrder - b.sortOrder),
+    [categories, kind],
+  )
+
+  // Effective selections: explicit choice, else first available
+  const effectiveAccountId = accountId ?? activeAccounts[0]?.id
+  const effectiveCategoryId = visibleCategories.some((c) => c.id === categoryId)
+    ? categoryId
+    : visibleCategories[0]?.id
+  const toOptions = useMemo(
+    () => activeAccounts.filter((a) => a.id !== effectiveAccountId),
+    [activeAccounts, effectiveAccountId],
+  )
+  const effectiveToAccountId = toOptions.some((a) => a.id === toAccountId)
+    ? toAccountId
+    : toOptions[0]?.id
+
   const minor = toMinorUnits(amount)
   const canSave =
     !saving &&
     minor !== null &&
-    (isTransfer ? accountId !== toAccountId : visibleCategories.some((c) => c.id === categoryId))
+    effectiveAccountId !== undefined &&
+    (isTransfer ? effectiveToAccountId !== undefined : effectiveCategoryId !== undefined)
 
   const reset = () => {
     setKind('expense')
     setAmount('')
-    setCategoryId(1)
-    setAccountId(1)
-    setToAccountId(2)
+    setAccountId(undefined)
+    setCategoryId(undefined)
+    setToAccountId(undefined)
     setNote('')
   }
 
   const handleSave = async () => {
-    if (!canSave || minor === null) return
+    if (!canSave || minor === null || effectiveAccountId === undefined) return
     setSaving(true)
     try {
       const now = Date.now()
       await db.transactions.add({
-        accountId,
-        categoryId: isTransfer ? undefined : categoryId,
+        accountId: effectiveAccountId,
+        categoryId: isTransfer ? undefined : effectiveCategoryId,
         kind,
         amount: minor,
         note: note.trim() || undefined,
         occurredAt: now,
-        toAccountId: isTransfer ? toAccountId : undefined,
+        toAccountId: isTransfer ? effectiveToAccountId : undefined,
         createdAt: now,
         updatedAt: now,
       })
@@ -105,6 +144,7 @@ export default function AddTransactionSheet() {
   }
 
   if (!mounted) return null
+  const loading = accounts === undefined || categories === undefined
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
@@ -167,57 +207,77 @@ export default function AddTransactionSheet() {
             />
           </div>
 
-          {/* Category (not for transfers) */}
-          {!isTransfer && (
-            <div className="mt-6">
-              <p className="mb-2 text-[13px] font-medium uppercase tracking-wide text-neutral-500">Category</p>
-              <div className="flex flex-wrap gap-2">
-                {visibleCategories.map((c) => (
-                  <Pill
-                    key={c.id}
-                    label={c.name}
-                    color={c.color}
-                    selected={categoryId === c.id}
-                    onClick={() => setCategoryId(c.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Account(s) */}
-          <div className="mt-6">
-            <p className="mb-2 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
-              {isTransfer ? 'From' : 'Account'}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {MOCK_ACCOUNTS.map((a) => (
-                <Pill
-                  key={a.id}
-                  label={a.name}
-                  color={a.color}
-                  selected={accountId === a.id}
-                  onClick={() => setAccountId(a.id)}
-                />
-              ))}
-            </div>
-            {isTransfer && (
-              <>
-                <p className="mb-2 mt-4 text-[13px] font-medium uppercase tracking-wide text-neutral-500">To</p>
-                <div className="flex flex-wrap gap-2">
-                  {MOCK_ACCOUNTS.filter((a) => a.id !== accountId).map((a) => (
-                    <Pill
-                      key={a.id}
-                      label={a.name}
-                      color={a.color}
-                      selected={toAccountId === a.id}
-                      onClick={() => setToAccountId(a.id)}
-                    />
-                  ))}
+          {loading ? (
+            <p className="mt-6 text-center text-sm text-neutral-400">Loading…</p>
+          ) : (
+            <>
+              {/* Category (not for transfers) */}
+              {!isTransfer && (
+                <div className="mt-6">
+                  <p className="mb-2 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
+                    Category
+                  </p>
+                  {visibleCategories.length === 0 ? (
+                    <p className="text-sm text-neutral-400">
+                      No categories yet — add one in Settings.
+                    </p>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {visibleCategories.map((c) => (
+                        <Pill
+                          key={c.id}
+                          label={c.name}
+                          color={c.color ?? '#8e8e93'}
+                          selected={effectiveCategoryId === c.id}
+                          onClick={() => setCategoryId(c.id)}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
+              )}
+
+              {/* Account(s) */}
+              <div className="mt-6">
+                <p className="mb-2 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
+                  {isTransfer ? 'From' : 'Account'}
+                </p>
+                {activeAccounts.length === 0 ? (
+                  <p className="text-sm text-neutral-400">No accounts yet — add one in Settings.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {activeAccounts.map((a) => (
+                      <Pill
+                        key={a.id}
+                        label={a.name}
+                        color={a.color ?? '#8e8e93'}
+                        selected={effectiveAccountId === a.id}
+                        onClick={() => setAccountId(a.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+                {isTransfer && toOptions.length > 0 && (
+                  <>
+                    <p className="mb-2 mt-4 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
+                      To
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {toOptions.map((a) => (
+                        <Pill
+                          key={a.id}
+                          label={a.name}
+                          color={a.color ?? '#8e8e93'}
+                          selected={effectiveToAccountId === a.id}
+                          onClick={() => setToAccountId(a.id)}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </>
+          )}
 
           {/* Note */}
           <div className="mt-6">

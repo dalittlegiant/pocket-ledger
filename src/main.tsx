@@ -4,12 +4,14 @@ import App from './App'
 import './index.css'
 import { seedIfEmpty } from './seed'
 
-// Seed demo data on first launch (no-op once the DB has accounts).
-// Fire-and-forget: useLiveQuery picks the data up reactively when it lands.
-seedIfEmpty().catch((e) => console.error('[PocketLedger] seed failed', e))
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+// Seed first, then render — so the boot-time auto-sync in App sees the
+// freshly seeded scheduled rules on a first launch.
+seedIfEmpty()
+  .catch((e) => console.error('[PocketLedger] seed failed', e))
+  .finally(() => {
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <React.StrictMode>
+        <App />
+      </React.StrictMode>,
+    )
+  })

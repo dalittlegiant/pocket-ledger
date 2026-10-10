@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '../db'
-import { formatMoney, getCategory } from '../lib/catalog'
+import { db, type Category } from '../db'
+import { formatMoney } from '../lib/format'
 
 type Period = 'this' | 'last'
 
@@ -38,8 +38,10 @@ export default function ChartsTab() {
     () => db.transactions.where('occurredAt').between(range.start, range.end).toArray(),
     [range.start, range.end],
   )
+  const categories = useLiveQuery(() => db.categories.toArray(), [])
 
   const stats = useMemo(() => {
+    const categoryById = new Map((categories ?? []).map((c) => [c.id as number, c]))
     let expense = 0
     let income = 0
     const byCategory = new Map<number, number>()
@@ -55,14 +57,11 @@ export default function ChartsTab() {
       // transfers are excluded from income/expense analytics
     }
     const rows = [...byCategory.entries()]
-      .map(([id, total]) => ({ category: getCategory(id), total }))
-      .filter(
-        (r): r is { category: NonNullable<ReturnType<typeof getCategory>>; total: number } =>
-          r.category !== undefined,
-      )
+      .map(([id, total]) => ({ category: categoryById.get(id), total }))
+      .filter((r): r is { category: Category; total: number } => r.category !== undefined)
       .sort((a, b) => b.total - a.total)
     return { expense, income, net: income - expense, rows }
-  }, [txns])
+  }, [txns, categories])
 
   return (
     <div className="px-5 pb-6 pt-1">
@@ -121,7 +120,7 @@ export default function ChartsTab() {
       <h3 className="mb-1.5 mt-5 px-1 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
         Spending
       </h3>
-      {txns === undefined ? (
+      {txns === undefined || categories === undefined ? (
         <div className="p-2 text-sm text-neutral-400">Loading…</div>
       ) : stats.rows.length === 0 ? (
         <div className="rounded-2xl bg-white p-6 text-center text-sm text-neutral-400 shadow-sm">

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type Transaction } from '../db'
-import { dayKey, dayLabel, formatMoney, getAccount, getCategory, timeLabel } from '../lib/catalog'
+import { db, type Account, type Category, type Transaction } from '../db'
+import { dayKey, dayLabel, formatMoney, timeLabel } from '../lib/format'
 
 function amountStyle(kind: Transaction['kind']): string {
   switch (kind) {
@@ -18,13 +18,20 @@ function amountPrefix(kind: Transaction['kind']): string {
   return kind === 'expense' ? '−' : kind === 'income' ? '+' : ''
 }
 
-function Row({ txn }: { txn: Transaction }) {
-  const category = getCategory(txn.categoryId)
-  const account = getAccount(txn.accountId)
-  const toAccount = getAccount(txn.toAccountId)
-
+function Row({
+  txn,
+  account,
+  category,
+  toAccount,
+}: {
+  txn: Transaction
+  account?: Account
+  category?: Category
+  toAccount?: Account
+}) {
   const title = txn.note?.trim() || category?.name || (txn.kind === 'transfer' ? 'Transfer' : 'Transaction')
-  const subtitle = txn.kind === 'transfer' ? `${account?.name ?? ''} → ${toAccount?.name ?? ''}` : (account?.name ?? '')
+  const subtitle =
+    txn.kind === 'transfer' ? `${account?.name ?? ''} → ${toAccount?.name ?? ''}` : (account?.name ?? '')
   const dotColor = category?.color ?? '#8e8e93'
   const initial = (category?.name ?? (txn.kind === 'transfer' ? 'T' : '?'))[0].toUpperCase()
 
@@ -54,6 +61,17 @@ function Row({ txn }: { txn: Transaction }) {
 
 export default function RecordsTab() {
   const txns = useLiveQuery(() => db.transactions.orderBy('occurredAt').reverse().toArray(), [])
+  const accounts = useLiveQuery(() => db.accounts.toArray(), [])
+  const categories = useLiveQuery(() => db.categories.toArray(), [])
+
+  const accountById = useMemo(
+    () => new Map((accounts ?? []).map((a) => [a.id as number, a])),
+    [accounts],
+  )
+  const categoryById = useMemo(
+    () => new Map((categories ?? []).map((c) => [c.id as number, c])),
+    [categories],
+  )
 
   const groups = useMemo(() => {
     const map = new Map<string, { label: string; items: Transaction[] }>()
@@ -66,7 +84,7 @@ export default function RecordsTab() {
     return [...map.values()]
   }, [txns])
 
-  if (txns === undefined) {
+  if (txns === undefined || accounts === undefined || categories === undefined) {
     return <div className="p-5 text-sm text-neutral-400">Loading…</div>
   }
 
@@ -93,7 +111,13 @@ export default function RecordsTab() {
           </h3>
           <div className="divide-y divide-neutral-200/70 overflow-hidden rounded-2xl bg-white shadow-sm">
             {g.items.map((t) => (
-              <Row key={t.id} txn={t} />
+              <Row
+                key={t.id}
+                txn={t}
+                account={accountById.get(t.accountId)}
+                category={t.categoryId !== undefined ? categoryById.get(t.categoryId) : undefined}
+                toAccount={t.toAccountId !== undefined ? accountById.get(t.toAccountId) : undefined}
+              />
             ))}
           </div>
         </section>

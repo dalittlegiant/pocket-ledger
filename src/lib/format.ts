@@ -1,34 +1,4 @@
-// Temporary mock data until real account/category management lands.
-// IDs are stable so transactions saved now keep resolving later.
-
-export interface MockAccount {
-  id: number
-  name: string
-  color: string
-}
-
-export interface MockCategory {
-  id: number
-  name: string
-  kind: 'expense' | 'income'
-  color: string
-}
-
-export const MOCK_ACCOUNTS: MockAccount[] = [
-  { id: 1, name: 'Cash', color: '#30d158' },
-  { id: 2, name: 'Credit Card', color: '#0a84ff' },
-]
-
-export const MOCK_CATEGORIES: MockCategory[] = [
-  { id: 1, name: 'Food', kind: 'expense', color: '#ff9f0a' },
-  { id: 2, name: 'Transport', kind: 'expense', color: '#0a84ff' },
-  { id: 3, name: 'Salary', kind: 'income', color: '#30d158' },
-]
-
-export const getAccount = (id?: number) => MOCK_ACCOUNTS.find((a) => a.id === id)
-export const getCategory = (id?: number) => MOCK_CATEGORIES.find((c) => c.id === id)
-
-// --- Money: user-facing string <-> integer minor units ---
+// Shared formatting helpers. (Accounts/categories live in Dexie — no mocks here.)
 
 /** "50.5" -> 5050. Returns null for empty/invalid/non-positive input. */
 export function toMinorUnits(input: string): number | null {
@@ -44,8 +14,6 @@ const moneyFmt = new Intl.NumberFormat('en-HK', { style: 'currency', currency: '
 export function formatMoney(minorUnits: number): string {
   return moneyFmt.format(minorUnits / 100)
 }
-
-// --- Date grouping ---
 
 export function dayKey(ts: number): string {
   const d = new Date(ts)

@@ -1,8 +1,54 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import RecordsTab from './components/RecordsTab'
 import ChartsTab from './components/ChartsTab'
+import SettingsTab from './components/SettingsTab'
 import AddTransactionSheet from './components/AddTransactionSheet'
 import { useUIStore } from './store'
+import { runAutoSync } from './lib/scheduler'
+import { parseSMS } from './lib/sms'
+
+// Module flag: the sync must run exactly once per page load, even under
+// React StrictMode's double-effect invocation in dev.
+let autoSyncDone = false
+
+/** Runs once on boot: materializes due scheduled rules into transactions. */
+function useAutoSync() {
+  useEffect(() => {
+    if (autoSyncDone) return
+    autoSyncDone = true
+    runAutoSync()
+      .then((n) => {
+        if (n > 0) console.log(`[PocketLedger] auto-synced ${n} scheduled transaction(s)`)
+      })
+      .catch((e) => console.error('[PocketLedger] auto-sync failed', e))
+  }, [])
+}
+
+/**
+ * iOS Shortcuts bridge: when the app is opened with ?sms_text=…,
+ * parse the SMS, prefill the add sheet, and clear the param so a
+ * refresh never re-triggers it.
+ */
+function useSMSReceiver() {
+  const openAddTxn = useUIStore((s) => s.openAddTxn)
+  const setTxnPrefill = useUIStore((s) => s.setTxnPrefill)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const raw = params.get('sms_text')
+    if (!raw) return
+
+    // Clear immediately — before parsing — so refresh is always safe.
+    params.delete('sms_text')
+    const rest = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+
+    const parsed = parseSMS(raw)
+    if (!parsed) return
+    setTxnPrefill({ amount: (parsed.amount / 100).toFixed(2), note: parsed.merchant })
+    openAddTxn()
+  }, [openAddTxn, setTxnPrefill])
+}
 
 type TabId = 'records' | 'charts' | 'settings'
 
@@ -47,16 +93,6 @@ const TITLES: Record<TabId, string> = {
   settings: 'Settings',
 }
 
-function Placeholder({ tab }: { tab: TabId }) {
-  return (
-    <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-      <div className="text-neutral-300">{TABS.find((t) => t.id === tab)?.icon}</div>
-      <p className="text-lg font-semibold text-neutral-800">{TITLES[tab]}</p>
-      <p className="text-sm text-neutral-500">Coming in the next phase.</p>
-    </div>
-  )
-}
-
 function TabContent({ tab }: { tab: TabId }) {
   switch (tab) {
     case 'records':
@@ -64,13 +100,16 @@ function TabContent({ tab }: { tab: TabId }) {
     case 'charts':
       return <ChartsTab />
     case 'settings':
-      return <Placeholder tab={tab} />
+      return <SettingsTab />
   }
 }
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('records')
   const openAddTxn = useUIStore((s) => s.openAddTxn)
+
+  useAutoSync()
+  useSMSReceiver()
 
   return (
     <div className="flex h-dvh justify-center bg-neutral-200 font-system text-neutral-900 antialiased">
