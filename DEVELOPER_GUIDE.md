@@ -306,6 +306,14 @@ user must pass two gates (file picker + confirm dialog).
 - **PWA icons** (`public/*.png`) are generated binaries. They are **not** included in
   text-based CodeSandbox uploads — after re-uploading to CodeSandbox, re-add them or
   the PWA manifest will 404 the icons (see §6).
+- **Dexie `orderBy()` requires an indexed field.** Calling `orderBy()` on a
+  non-indexed keyPath throws `SchemaError: KeyPath X on object store Y is not indexed`
+  at query time — and inside `useLiveQuery` that error is re-thrown during render,
+  unmounting the whole app (white screen). This actually happened once with
+  `db.accounts.orderBy('createdAt')` (`createdAt` was never indexed on `accounts`).
+  Fix options: add the index (requires a Dexie version bump) or sort small tables in
+  JS after `toArray()`. When in doubt, grep `version(1).stores()` in `db.ts` before
+  using `orderBy`/`where` on a field.
 - **Dexie versioning:** current version is 1. Any schema/index change requires a version
   bump + upgrade handler. Test upgrades against a v1 database before shipping.
 

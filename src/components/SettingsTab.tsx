@@ -43,7 +43,12 @@ function Dot({ color, letter }: { color?: string; letter: string }) {
 }
 
 export default function SettingsTab() {
-  const accounts = useLiveQuery(() => db.accounts.orderBy('createdAt').toArray(), [])
+  // NOTE: db.accounts has no 'createdAt' index (see db.ts) — Dexie's orderBy()
+  // throws on non-indexed fields, so sort the small account list in JS instead.
+  const accounts = useLiveQuery(async () => {
+    const list = await db.accounts.toArray()
+    return list.sort((a, b) => a.createdAt - b.createdAt)
+  }, [])
   const categories = useLiveQuery(() => db.categories.orderBy('sortOrder').toArray(), [])
   const rules = useLiveQuery(() => db.scheduled_rules.orderBy('nextRunAt').toArray(), [])
   const fileRef = useRef<HTMLInputElement>(null)
@@ -117,7 +122,8 @@ export default function SettingsTab() {
       window.alert('Invalid amount — rule not created.')
       return
     }
-    const firstAccount = await db.accounts.orderBy('createdAt').first()
+    const allAccounts = await db.accounts.toArray()
+    const firstAccount = allAccounts.sort((a, b) => a.createdAt - b.createdAt)[0]
     if (!firstAccount?.id) {
       window.alert('Add an account first.')
       return
@@ -145,7 +151,7 @@ export default function SettingsTab() {
       {/* Accounts */}
       <Section title="Accounts">
         <div className="divide-y divide-neutral-200/70">
-          {accounts.map((a) => (
+          {(accounts ?? []).map((a) => (
             <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
               <Dot color={a.color} letter={a.name[0].toUpperCase()} />
               <span className="min-w-0 flex-1 truncate text-[16px] text-neutral-900">{a.name}</span>
@@ -159,7 +165,7 @@ export default function SettingsTab() {
       {/* Categories */}
       <Section title="Categories">
         <div className="divide-y divide-neutral-200/70">
-          {categories.map((c) => (
+          {(categories ?? []).map((c) => (
             <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
               <Dot color={c.color} letter={c.name[0].toUpperCase()} />
               <span className="min-w-0 flex-1 truncate text-[16px] text-neutral-900">{c.name}</span>
@@ -181,7 +187,7 @@ export default function SettingsTab() {
       {/* Scheduled Transactions */}
       <Section title="Scheduled Transactions">
         <div className="divide-y divide-neutral-200/70">
-          {rules.map((r) => (
+          {(rules ?? []).map((r) => (
             <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
               <Dot color="#bf5af2" letter={(r.note ?? 'R')[0].toUpperCase()} />
               <div className="min-w-0 flex-1">

@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { Component, useEffect, useState, type ReactNode } from 'react'
 import RecordsTab from './components/RecordsTab'
 import ChartsTab from './components/ChartsTab'
 import SettingsTab from './components/SettingsTab'
@@ -108,6 +108,37 @@ function TabContent({ tab }: { tab: TabId }) {
   }
 }
 
+/**
+ * Catches render errors inside a tab and shows a fallback instead of
+ * unmounting the whole app (the "white screen of death"). The key on the
+ * parent resets the boundary when switching tabs.
+ */
+class TabErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null }
+
+  static getDerivedStateFromError(error: Error) {
+    return { error }
+  }
+
+  componentDidCatch(error: Error) {
+    console.error('[PocketLedger] tab render crashed', error)
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-[16px] font-semibold text-neutral-900">Something went wrong</p>
+          <p className="mt-1 text-[13px] text-neutral-500">
+            Try switching tabs or restarting the app.
+          </p>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('records')
   const openAddTxn = useUIStore((s) => s.openAddTxn)
@@ -136,7 +167,9 @@ export default function App() {
 
         {/* Tab content */}
         <main className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-          <TabContent tab={activeTab} />
+          <TabErrorBoundary key={activeTab}>
+            <TabContent tab={activeTab} />
+          </TabErrorBoundary>
         </main>
 
         {/* iOS-style bottom tab bar */}
