@@ -5,10 +5,13 @@ import { VitePWA } from 'vite-plugin-pwa'
 // GitHub Pages serves project sites from a subpath (/<repo>/), while the
 // CodeSandbox preview serves from root. Use the subpath only for production
 // builds so the sandbox preview keeps working with zero manual edits.
+// The PWA manifest's id/start_url/scope MUST match the base path, otherwise
+// launching from the iOS Home Screen 404s on the deployed subpath.
 const isProd = process.env.NODE_ENV === 'production'
+const base = isProd ? '/pocket-ledger/' : '/'
 
 export default defineConfig({
-  base: isProd ? '/pocket-ledger/' : '/',
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -16,12 +19,12 @@ export default defineConfig({
       injectRegister: 'auto',
       includeAssets: ['favicon.svg', 'apple-touch-icon.png'],
       manifest: {
-        id: '/',
+        id: base,
         name: 'PocketLedger',
         short_name: 'PocketLedger',
         description: 'Offline-first personal finance tracker. Your data never leaves your device.',
-        start_url: '/',
-        scope: '/',
+        start_url: base,
+        scope: base,
         display: 'standalone',
         orientation: 'portrait',
         background_color: '#f2f2f7',
