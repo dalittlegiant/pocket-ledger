@@ -121,7 +121,7 @@ export default function App() {
       <div className="flex h-full w-full max-w-md flex-col overflow-hidden bg-[#f2f2f7] sm:shadow-2xl">
         {/* iOS-style navigation header */}
         <header className="shrink-0 bg-[#f2f2f7]/80 pt-safe backdrop-blur-xl">
-          <div className="flex items-end justify-between px-5 pb-2 pt-3">
+          <div className="flex items-end justify-between px-5 pb-1 pt-3">
             <h1 className="text-[28px] font-bold leading-tight tracking-tight">{TITLES[activeTab]}</h1>
             <button
               type="button"

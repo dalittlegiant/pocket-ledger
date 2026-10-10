@@ -64,7 +64,7 @@ export default function ChartsTab() {
   }, [txns, categories])
 
   return (
-    <div className="px-5 pb-6 pt-1">
+    <div className="px-5 pb-6 pt-0">
       {/* Period toggle */}
       <div className="flex rounded-xl bg-neutral-300/60 p-1">
         {PERIODS.map((p) => (
@@ -89,23 +89,23 @@ export default function ChartsTab() {
 
       {/* Summary card */}
       <div className="mt-1.5 rounded-2xl bg-white p-5 shadow-sm">
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
+        <div className="grid grid-cols-3 gap-1 text-center">
+          <div className="min-w-0">
             <p className="text-[12px] font-medium uppercase tracking-wide text-neutral-500">Expense</p>
-            <p className="mt-1 text-[17px] font-bold tabular-nums text-[#ff3b30]">
+            <p className="mt-1 truncate text-[13px] font-bold tabular-nums tracking-tighter text-[#ff3b30]">
               {formatMoney(stats.expense)}
             </p>
           </div>
-          <div className="border-x border-neutral-200/70">
+          <div className="min-w-0 border-x border-neutral-200/70">
             <p className="text-[12px] font-medium uppercase tracking-wide text-neutral-500">Income</p>
-            <p className="mt-1 text-[17px] font-bold tabular-nums text-[#34c759]">
+            <p className="mt-1 truncate text-[13px] font-bold tabular-nums tracking-tighter text-[#34c759]">
               {formatMoney(stats.income)}
             </p>
           </div>
-          <div>
+          <div className="min-w-0">
             <p className="text-[12px] font-medium uppercase tracking-wide text-neutral-500">Net Flow</p>
             <p
-              className={`mt-1 text-[17px] font-bold tabular-nums ${
+              className={`mt-1 truncate text-[13px] font-bold tabular-nums tracking-tighter ${
                 stats.net >= 0 ? 'text-neutral-900' : 'text-[#ff3b30]'
               }`}
             >
@@ -117,7 +117,7 @@ export default function ChartsTab() {
       </div>
 
       {/* Spending breakdown */}
-      <h3 className="mb-1.5 mt-5 px-1 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
+      <h3 className="mb-1 mt-4 px-1 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
         Spending
       </h3>
       {txns === undefined || categories === undefined ? (
@@ -133,11 +133,11 @@ export default function ChartsTab() {
             return (
               <div
                 key={category.id}
-                className={`px-4 py-3.5 ${i > 0 ? 'border-t border-neutral-200/70' : ''}`}
+                className={`px-4 py-2.5 ${i > 0 ? 'border-t border-neutral-200/70' : ''}`}
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[14px] font-semibold text-white"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold text-white"
                     style={{ backgroundColor: category.color }}
                   >
                     {category.name[0].toUpperCase()}
@@ -153,7 +153,7 @@ export default function ChartsTab() {
                   </span>
                 </div>
                 {/* Pure-CSS progress bar */}
-                <div className="ml-[48px] mt-2.5 h-2 overflow-hidden rounded-full bg-neutral-200/70">
+                <div className="ml-[44px] mt-2 h-1.5 overflow-hidden rounded-full bg-neutral-200/70">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{ width: `${pct}%`, backgroundColor: category.color }}
