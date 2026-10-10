@@ -45,7 +45,11 @@ function useSMSReceiver() {
 
     const parsed = parseSMS(raw)
     if (!parsed) return
-    setTxnPrefill({ amount: (parsed.amount / 100).toFixed(2), note: parsed.merchant })
+    setTxnPrefill({
+      amount: (parsed.amount / 100).toFixed(2),
+      note: parsed.merchant,
+      kind: parsed.kind,
+    })
     openAddTxn()
   }, [openAddTxn, setTxnPrefill])
 }

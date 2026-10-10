@@ -3,6 +3,7 @@ import { create } from 'zustand'
 export interface TxnPrefill {
   amount: string // e.g. "68.00" — pre-filled into the sheet's amount input
   note: string // e.g. "Starbucks"
+  kind: 'expense' | 'income' // extracted from the SMS (refunds → income)
 }
 
 interface UIState {

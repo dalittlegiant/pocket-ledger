@@ -233,16 +233,24 @@ kind fixed to `expense`, frequency fixed to `monthly`, first account used,
 6. `AddTransactionSheet` applies the prefill on open and **consumes it immediately**
    (`setTxnPrefill(null)`) — one-shot, never re-applied.
 
-**Exact regex rules** (`src/lib/sms.ts`, case-insensitive, tried in order):
+**Exact regex rules** (`src/lib/sms.ts`, tried in order; a hard fail-list
+`/未能完成|交易失敗|付款失敗|交易取消/` returns `null` first so failed payments are
+never logged):
 
-| # | Source | Pattern | Example SMS |
-|---|---|---|---|
-| 1 | PayMe | `` /paid HKD ([\d.]+) to (.+)/i `` | `You paid HKD 68.00 to Starbucks` → amount `6800`, note `Starbucks` |
-| 2 | Credit card | `` /for HKD ([\d.]+) at (.+)/i `` | `Payment for HKD 120.50 at MTR Corporation` → amount `12050`, note `MTR Corporation` |
+| # | Source | Kind | Pattern | Example |
+|---|---|---|---|---|
+| 1 | `hsbc-refund` | income | `` /一項([A-Z]{3})([\d,]+(?:\.\d{1,2})?)從\(([^)]+)\)的退款/ `` | `…一項USD1.00從(METAPAY YGXHK96WE4)的退款…` → 100 minor units, note `METAPAY YGXHK96WE4 (USD)` |
+| 2 | `hsbc-expense` | expense | `` /有([A-Z]{3})([\d,]+(?:\.\d{1,2})?)交易\(([^)]+)\)/ `` | `…有JPY23,080交易(WEST JAPAN RAILWAY C)…` → 2308000 minor units, note `WEST JAPAN RAILWAY C (JPY)` |
+| 3 | `alipay-auto` | expense | `` /通過(.+?)授權自動付款支付HKD([\d,]+(?:\.\d{1,2})?)/ `` | `…通過Google授權自動付款支付HKD40.00` → 4000, note `Google` |
+| 4 | `payme` | expense | `` /paid HKD ([\d.,]+) to (.+)/i `` | `You paid HKD 68.00 to Starbucks` → 6800, note `Starbucks` |
+| 5 | `credit-card` | expense | `` /for HKD ([\d.,]+) at (.+)/i `` | `…for HKD 120.50 at MTR Corporation` → 12050, note `MTR Corporation` |
 
-Parser details: amount goes through `toMinorUnits()` (rejects malformed numbers);
-merchant is trimmed and trailing `.`/`。` stripped; returns `null` on no match
-(the app then does nothing — no sheet, no error).
+Parser details: amounts go through `toMinorUnits()` (commas stripped, malformed
+rejected); merchant trimmed with trailing `.`/`。` stripped; the extracted `kind`
+flows through the Zustand `txnPrefill` and **switches the sheet's Expense/Income
+segmented control** (`AddTransactionSheet` applies `setKind(prefill.kind)`).
+Returns `null` on no match (the app then does nothing — no sheet, no error). To add
+a new bank, append to `RULES` and keep the `parseSMS` return contract.
 
 **Setting up the iPhone Shortcut** (for the owner / end users):
 1. Shortcuts app → **+** → add action **"URL-Encode"**, input = **Shortcut Input**.

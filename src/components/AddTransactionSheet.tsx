@@ -73,11 +73,12 @@ export default function AddTransactionSheet() {
   const [saving, setSaving] = useState(false)
 
   // One-shot prefill from the iOS Shortcuts SMS bridge: when the sheet opens
-  // with a pending prefill, apply it and consume it immediately.
+  // with a pending prefill, apply amount + note + kind, then consume it.
   useEffect(() => {
     if (isOpen && prefill) {
       setAmount(prefill.amount)
       setNote(prefill.note)
+      setKind(prefill.kind)
       setTxnPrefill(null)
     }
   }, [isOpen, prefill, setTxnPrefill])
