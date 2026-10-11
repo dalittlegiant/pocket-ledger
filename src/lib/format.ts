@@ -1,11 +1,12 @@
 // Shared formatting helpers. (Accounts/categories live in Dexie — no mocks here.)
 
-/** "50.5" -> 5050. Returns null for empty/invalid/non-positive input. */
+/** "50.5" -> 5050; "0" -> 0 (zero is valid, e.g. a free bus ride).
+ *  Returns null for empty/invalid input. Negatives never match the regex. */
 export function toMinorUnits(input: string): number | null {
   const trimmed = input.trim().replace(/,/g, '')
   if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null
   const minor = Math.round(parseFloat(trimmed) * 100)
-  return minor > 0 ? minor : null
+  return minor >= 0 ? minor : null
 }
 
 const moneyFmt = new Intl.NumberFormat('en-HK', { style: 'currency', currency: 'HKD' })

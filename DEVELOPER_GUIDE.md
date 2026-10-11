@@ -31,8 +31,8 @@ through that pipeline. See §6 for details.
 - **Money is stored as integer minor units** (e.g. `5050` = HK$50.50). Never store floats.
   Use `toMinorUnits()` / `formatMoney()` from `src/lib/format.ts`.
 - **Timestamps are epoch milliseconds** (`Date.now()`).
-- **Transaction amounts are always positive** — the sign is derived from `kind`
-  (`expense` / `income` / `transfer`).
+- **Transaction amounts are non-negative minor units** — zero is valid (e.g. a free
+  bus ride); the sign is derived from `kind` (`expense` / `income` / `transfer`).
 
 ---
 
