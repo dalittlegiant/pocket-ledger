@@ -3,7 +3,7 @@ import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, type Account, type AccountType, type Category, type ScheduledRule } from '../db'
 import { wipeAllData } from '../seed'
-import { advanceDate } from '../lib/scheduler'
+import { nextMonthlyOccurrence } from '../lib/scheduler'
 import { formatMoney, toMinorUnits } from '../lib/format'
 import { exportBackup, importBackup } from '../lib/backup'
 
@@ -360,13 +360,30 @@ type RuleModalState = { mode: 'add' } | { mode: 'edit'; rule: ScheduledRule }
 
 function RuleModal({ initial, onClose }: { initial: RuleModalState; onClose: () => void }) {
   const isEdit = initial.mode === 'edit'
+  const originalDay = isEdit
+    ? (initial.rule.dayOfMonth ?? new Date(initial.rule.nextRunAt).getDate())
+    : new Date().getDate()
   const [name, setName] = useState(isEdit ? (initial.rule.note ?? '') : '')
   const [amountStr, setAmountStr] = useState(
     isEdit ? (initial.rule.amount / 100).toFixed(2) : '0.00',
   )
+  const [dayStr, setDayStr] = useState(String(originalDay))
   const [error, setError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  const dayNum = /^\d{1,2}$/.test(dayStr.trim()) ? parseInt(dayStr.trim(), 10) : NaN
+  const dayValid = Number.isInteger(dayNum) && dayNum >= 1 && dayNum <= 31
+  const dayChanged = isEdit && dayValid && dayNum !== originalDay
+  // Preview: the stored nextRunAt unless the day was just (re)chosen, in
+  // which case the freshly computed, clamped occurrence.
+  const previewTs = !dayValid
+    ? isEdit
+      ? initial.rule.nextRunAt
+      : null
+    : isEdit && !dayChanged
+      ? initial.rule.nextRunAt
+      : nextMonthlyOccurrence(Date.now(), dayNum)
 
   const handleSave = async () => {
     const trimmed = name.trim()
@@ -379,13 +396,17 @@ function RuleModal({ initial, onClose }: { initial: RuleModalState; onClose: () 
       setError('Please enter a valid amount.')
       return
     }
+    if (!dayValid) {
+      setError('Day of the month must be between 1 and 31.')
+      return
+    }
     setSaving(true)
     try {
       if (isEdit) {
-        await db.scheduled_rules.update(initial.rule.id as number, {
-          note: trimmed,
-          amount: minor,
-        })
+        const patch: Partial<ScheduledRule> = { note: trimmed, amount: minor, dayOfMonth: dayNum }
+        // Day changed → re-anchor the schedule on the new day from today.
+        if (dayChanged) patch.nextRunAt = nextMonthlyOccurrence(Date.now(), dayNum)
+        await db.scheduled_rules.update(initial.rule.id as number, patch)
       } else {
         const allAccounts = await db.accounts.toArray()
         const firstAccount = allAccounts.sort((a, b) => a.createdAt - b.createdAt)[0]
@@ -401,7 +422,8 @@ function RuleModal({ initial, onClose }: { initial: RuleModalState; onClose: () 
           note: trimmed,
           frequency: 'monthly',
           interval: 1,
-          nextRunAt: advanceDate(now, 'monthly', 1),
+          dayOfMonth: dayNum,
+          nextRunAt: nextMonthlyOccurrence(now, dayNum),
           isActive: true,
           createdAt: now,
         })
@@ -455,10 +477,27 @@ function RuleModal({ initial, onClose }: { initial: RuleModalState; onClose: () 
             className="w-full bg-transparent text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none"
           />
         </div>
+        <div className="mt-3 flex items-center justify-between rounded-xl bg-neutral-100 px-4 py-2.5">
+          <label htmlFor="rule-day" className="text-[16px] text-neutral-900">
+            Day of the month
+          </label>
+          <input
+            id="rule-day"
+            value={dayStr}
+            onChange={(e) => {
+              setDayStr(e.target.value)
+              setError(null)
+            }}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            placeholder="1–31"
+            className="w-16 rounded-lg bg-white px-2 py-1.5 text-center text-[16px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
+          />
+        </div>
         <p className="mt-2 px-1 text-[12px] text-neutral-400">
           Repeats monthly
-          {isEdit &&
-            ` · next ${new Date(initial.rule.nextRunAt).toLocaleDateString('en-US', {
+          {previewTs !== null &&
+            ` · next ${new Date(previewTs).toLocaleDateString('en-US', {
               month: 'short',
               day: 'numeric',
             })}`}
@@ -612,7 +651,7 @@ export default function SettingsTab() {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[16px] text-neutral-900">{r.note ?? 'Recurring'}</p>
                 <p className="text-[13px] text-neutral-500">
-                  Monthly · next{' '}
+                  Monthly{r.dayOfMonth != null && ` · day ${r.dayOfMonth}`} · next{' '}
                   {new Date(r.nextRunAt).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',

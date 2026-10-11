@@ -54,6 +54,10 @@ export interface ScheduledRule {
   note?: string
   frequency: RuleFrequency
   interval: number // every N frequency units
+  /** Pinned day-of-month for monthly rules (1-31). Each occurrence clamps to the
+   *  target month's length (31st → Feb 28), never rolling into the next month.
+   *  Undefined for legacy rules, which keep the old step-from-last-run behavior. */
+  dayOfMonth?: number
   nextRunAt: number
   lastRunAt?: number
   isActive: boolean

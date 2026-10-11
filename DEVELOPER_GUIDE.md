@@ -221,6 +221,20 @@ the project history):
   (naive `setMonth()` overflows). The clamped day persists for subsequent runs.
 - Yearly: Feb 29 + 1 year → **Feb 28** on non-leap years.
 
+**Pinned day-of-month** (`ScheduledRule.dayOfMonth`, optional, non-indexed — no
+migration needed):
+- The `RuleModal` lets the user pick a day (1–31); new rules default to today's
+  date. The modal shows a live "next {date}" preview computed with clamping.
+- Rules with `dayOfMonth` set advance via `advanceMonthlyPinned()` instead of
+  `advanceDate()`: each step re-anchors to the pinned day, so Jan 31 → Feb 28 →
+  **Mar 31** (no drift to the 28th, no rollover to Mar 3).
+- `nextMonthlyOccurrence()` computes the first run: a future day this month wins,
+  otherwise next month — picking today's date lands next month, matching the old
+  "one month from creation" default. Editing only the name/amount keeps the
+  existing `nextRunAt`; changing the day re-anchors from today.
+- Legacy rules without `dayOfMonth` (e.g. the Netflix seed) keep the old
+  step-from-last-run behavior.
+
 **Settings UI:** `SettingsTab.tsx` → "Scheduled Transactions" group lists rules live
 (`useLiveQuery`) and offers "+ Add Monthly Expense" (name + amount via `prompt()`;
 kind fixed to `expense`, frequency fixed to `monthly`, first account used,
