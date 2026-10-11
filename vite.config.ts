@@ -12,6 +12,19 @@ const base = isProd ? '/pocket-ledger/' : '/'
 
 export default defineConfig({
   base,
+  build: {
+    // Wipe dist/ on every build — no stale files can leak into a deploy.
+    emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // Content-hashed filenames (explicit): any code change produces
+        // brand-new asset URLs, defeating CDN / HTTP caching of old bundles.
+        entryFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash][extname]',
+      },
+    },
+  },
   plugins: [
     react(),
     VitePWA({
