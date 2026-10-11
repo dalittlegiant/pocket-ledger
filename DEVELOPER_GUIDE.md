@@ -78,6 +78,18 @@ pocket-ledger/
 - **`src/main.tsx`** — Deliberately awaits `seedIfEmpty()` before rendering, so the
   boot-time auto-sync (in `App.tsx`) sees freshly seeded scheduled rules on first launch.
   Do not "optimize" this into a fire-and-forget without understanding the race it prevents.
+- **`src/components/AddTransactionSheet.tsx`** — bottom sheet for add/edit. Edit mode is
+  driven by `editingTxnId` in the Zustand store (`openEditTxn(id)`); on open the sheet
+  loads the record via `db.transactions.get()` and pre-fills kind/amount/account/
+  category/note/date, then saves with `db.transactions.put()` (not `add`). A two-tap
+  red delete button appears only in edit mode. A date field (`<input type="date">`,
+  noon-local-time conversion) sets `occurredAt`. The open-time setup effect runs once
+  per open with precedence: edit record > SMS prefill > fresh defaults.
+- **`src/components/SettingsTab.tsx`** — category add/edit lives in an iOS-style
+  `CategoryModal` (segmented Income/Expense control + name input), never
+  `window.prompt`. Deleting a category is blocked when transactions or scheduled
+  rules reference it (transactions use the indexed `categoryId`; scheduled_rules
+  has no `categoryId` index so it's filtered in JS — see the orderBy lesson below).
 - **`src/seed.ts`** — `seedIfEmpty()` runs on every boot but is a no-op unless tables are
   empty. Seeds: 2 accounts (Cash, Credit Card), 3 categories (Food, Transport, Salary),
   3 demo transactions, and **one scheduled rule (Netflix, HK$78/mo) that is already due** —

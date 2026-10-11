@@ -38,11 +38,32 @@ function Pill({
   )
 }
 
+/** Epoch ms → "YYYY-MM-DD" for <input type="date"> (local timezone). */
+function toDateInputValue(ts: number): string {
+  const d = new Date(ts)
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${d.getFullYear()}-${m}-${day}`
+}
+
+/**
+ * "YYYY-MM-DD" → epoch ms. Uses noon local time to dodge DST/midnight
+ * boundary issues — only the calendar day matters for grouping.
+ */
+function fromDateInputValue(v: string): number | null {
+  const m = v.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (!m) return null
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0)
+  return Number.isNaN(d.getTime()) ? null : d.getTime()
+}
+
 export default function AddTransactionSheet() {
   const isOpen = useUIStore((s) => s.isAddTxnModalOpen)
+  const editingTxnId = useUIStore((s) => s.editingTxnId)
   const close = useUIStore((s) => s.closeAddTxn)
-  const prefill = useUIStore((s) => s.txnPrefill)
   const setTxnPrefill = useUIStore((s) => s.setTxnPrefill)
+
+  const isEditMode = editingTxnId !== null
 
   // Mount/unmount with slide animation
   const [mounted, setMounted] = useState(false)
@@ -70,18 +91,54 @@ export default function AddTransactionSheet() {
   const [categoryId, setCategoryId] = useState<number | undefined>(undefined)
   const [toAccountId, setToAccountId] = useState<number | undefined>(undefined)
   const [note, setNote] = useState('')
+  const [dateStr, setDateStr] = useState(() => toDateInputValue(Date.now()))
   const [saving, setSaving] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
 
-  // One-shot prefill from the iOS Shortcuts SMS bridge: when the sheet opens
-  // with a pending prefill, apply amount + note + kind, then consume it.
+  // Populate the form exactly once per open. Precedence: edit record >
+  // SMS prefill > fresh defaults. Reading via getState() keeps this a
+  // single-shot effect — clearing the prefill inside won't re-trigger it.
   useEffect(() => {
-    if (isOpen && prefill) {
+    if (!isOpen) return
+    setConfirmingDelete(false)
+    const { editingTxnId: editId, txnPrefill: prefill } = useUIStore.getState()
+    if (editId !== null) {
+      let cancelled = false
+      db.transactions.get(editId).then((t) => {
+        if (cancelled || !t) return
+        setKind(t.kind)
+        setAmount((t.amount / 100).toFixed(2))
+        setAccountId(t.accountId)
+        setCategoryId(t.categoryId)
+        setToAccountId(t.toAccountId)
+        setNote(t.note ?? '')
+        setDateStr(toDateInputValue(t.occurredAt))
+      })
+      return () => {
+        cancelled = true
+      }
+    }
+    if (prefill) {
+      // One-shot prefill from the iOS Shortcuts SMS bridge.
+      setKind(prefill.kind)
       setAmount(prefill.amount)
       setNote(prefill.note)
-      setKind(prefill.kind)
-      setTxnPrefill(null)
+      setAccountId(undefined)
+      setCategoryId(undefined)
+      setToAccountId(undefined)
+      setDateStr(toDateInputValue(Date.now()))
+      useUIStore.getState().setTxnPrefill(null)
+      return
     }
-  }, [isOpen, prefill, setTxnPrefill])
+    // Fresh add form.
+    setKind('expense')
+    setAmount('')
+    setAccountId(undefined)
+    setCategoryId(undefined)
+    setToAccountId(undefined)
+    setNote('')
+    setDateStr(toDateInputValue(Date.now()))
+  }, [isOpen])
 
   const isTransfer = kind === 'transfer'
   const visibleCategories = useMemo(
@@ -106,42 +163,52 @@ export default function AddTransactionSheet() {
     : toOptions[0]?.id
 
   const minor = toMinorUnits(amount)
+  const occurredAt = fromDateInputValue(dateStr)
   const canSave =
     !saving &&
     minor !== null &&
+    occurredAt !== null &&
     effectiveAccountId !== undefined &&
     (isTransfer ? effectiveToAccountId !== undefined : effectiveCategoryId !== undefined)
 
-  const reset = () => {
-    setKind('expense')
-    setAmount('')
-    setAccountId(undefined)
-    setCategoryId(undefined)
-    setToAccountId(undefined)
-    setNote('')
-  }
-
   const handleSave = async () => {
-    if (!canSave || minor === null || effectiveAccountId === undefined) return
+    if (!canSave || minor === null || occurredAt === null || effectiveAccountId === undefined)
+      return
     setSaving(true)
     try {
       const now = Date.now()
-      await db.transactions.add({
+      const fields = {
         accountId: effectiveAccountId,
         categoryId: isTransfer ? undefined : effectiveCategoryId,
         kind,
         amount: minor,
         note: note.trim() || undefined,
-        occurredAt: now,
+        occurredAt,
         toAccountId: isTransfer ? effectiveToAccountId : undefined,
-        createdAt: now,
         updatedAt: now,
-      })
-      reset()
+      }
+      if (isEditMode && editingTxnId !== null) {
+        const existing = await db.transactions.get(editingTxnId)
+        if (existing) {
+          await db.transactions.put({ ...existing, ...fields })
+        }
+      } else {
+        await db.transactions.add({ ...fields, createdAt: now })
+      }
       close()
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleDelete = async () => {
+    if (!isEditMode || editingTxnId === null) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    await db.transactions.delete(editingTxnId)
+    close()
   }
 
   if (!mounted) return null
@@ -174,7 +241,9 @@ export default function AddTransactionSheet() {
           <button type="button" onClick={close} className="text-[17px] text-ios-blue active:opacity-60">
             Cancel
           </button>
-          <h2 className="text-[17px] font-semibold">New Transaction</h2>
+          <h2 className="text-[17px] font-semibold">
+            {isEditMode ? 'Edit Transaction' : 'New Transaction'}
+          </h2>
           <span className="w-[52px]" />
         </div>
 
@@ -277,6 +346,19 @@ export default function AddTransactionSheet() {
                   </>
                 )}
               </div>
+
+              {/* Date */}
+              <div className="mt-6">
+                <p className="mb-2 text-[13px] font-medium uppercase tracking-wide text-neutral-500">
+                  Date
+                </p>
+                <input
+                  type="date"
+                  value={dateStr}
+                  onChange={(e) => setDateStr(e.target.value)}
+                  className="w-full rounded-xl bg-white px-4 py-3 text-[16px] text-neutral-900 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
+                />
+              </div>
             </>
           )}
 
@@ -290,6 +372,23 @@ export default function AddTransactionSheet() {
               className="w-full rounded-xl bg-white px-4 py-3 text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
             />
           </div>
+
+          {/* Delete (edit mode only) */}
+          {isEditMode && (
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={handleDelete}
+                className={`w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
+                  confirmingDelete
+                    ? 'bg-[#ff3b30] text-white'
+                    : 'bg-[#ff3b30]/10 text-[#ff3b30]'
+                }`}
+              >
+                {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Transaction'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Save */}
@@ -302,7 +401,7 @@ export default function AddTransactionSheet() {
               canSave ? 'bg-ios-blue' : 'bg-neutral-300'
             }`}
           >
-            {saving ? 'Saving…' : 'Save'}
+            {saving ? 'Saving…' : isEditMode ? 'Save Changes' : 'Save'}
           </button>
           <div className="h-2" />
         </div>

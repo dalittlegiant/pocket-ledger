@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db } from '../db'
+import { db, type Category } from '../db'
 import { wipeAllData } from '../seed'
 import { advanceDate } from '../lib/scheduler'
 import { formatMoney, toMinorUnits } from '../lib/format'
@@ -42,6 +42,146 @@ function Dot({ color, letter }: { color?: string; letter: string }) {
   )
 }
 
+type CatModalState = { mode: 'add' } | { mode: 'edit'; category: Category }
+
+/**
+ * iOS-style centered dialog for adding / editing a category.
+ * Replaces the old window.prompt / window.confirm flow.
+ */
+function CategoryModal({ initial, onClose }: { initial: CatModalState; onClose: () => void }) {
+  const isEdit = initial.mode === 'edit'
+  const [name, setName] = useState(isEdit ? initial.category.name : '')
+  const [kind, setKind] = useState<'expense' | 'income'>(
+    isEdit ? initial.category.kind : 'expense',
+  )
+  const [error, setError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('Please enter a category name.')
+      return
+    }
+    setSaving(true)
+    try {
+      if (isEdit) {
+        await db.categories.update(initial.category.id as number, { name: trimmed, kind })
+      } else {
+        const last = await db.categories.orderBy('sortOrder').last()
+        await db.categories.add({
+          name: trimmed,
+          kind,
+          color: kind === 'income' ? '#30d158' : '#ff9f0a',
+          sortOrder: (last?.sortOrder ?? 0) + 1,
+          isArchived: false,
+        })
+      }
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!isEdit) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    const id = initial.category.id as number
+    // categoryId is indexed on transactions; scheduled_rules has no
+    // categoryId index, so filter that table in JS (see db.ts).
+    const usedByTxns = await db.transactions.where('categoryId').equals(id).count()
+    const usedByRules = await db.scheduled_rules.filter((r) => r.categoryId === id).count()
+    const total = usedByTxns + usedByRules
+    if (total > 0) {
+      setError(
+        `This category is used by ${total} transaction${total === 1 ? '' : 's'}. ` +
+          `Reassign or delete ${total === 1 ? 'it' : 'them'} first.`,
+      )
+      setConfirmingDelete(false)
+      return
+    }
+    await db.categories.delete(id)
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+        <h2 className="text-center text-[17px] font-semibold text-neutral-900">
+          {isEdit ? 'Edit Category' : 'New Category'}
+        </h2>
+
+        {/* Kind segmented control */}
+        <div className="mt-4 flex rounded-xl bg-neutral-300/60 p-1">
+          {(['expense', 'income'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setKind(k)}
+              className={`flex-1 rounded-lg py-1.5 text-[13px] font-medium transition-all ${
+                kind === k
+                  ? 'bg-white text-neutral-900 shadow-sm'
+                  : 'text-neutral-600 active:text-neutral-900'
+              }`}
+            >
+              {k === 'expense' ? 'Expense' : 'Income'}
+            </button>
+          ))}
+        </div>
+
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            setError(null)
+          }}
+          placeholder="Category name"
+          maxLength={40}
+          autoFocus
+          className="mt-3 w-full rounded-xl bg-neutral-100 px-4 py-3 text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
+        />
+
+        {error && <p className="mt-2 text-[13px] text-[#ff3b30]">{error}</p>}
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || name.trim().length === 0}
+          className={`mt-4 w-full rounded-2xl py-3 text-[17px] font-semibold text-white transition-all active:scale-[0.98] ${
+            saving || name.trim().length === 0 ? 'bg-neutral-300' : 'bg-ios-blue'
+          }`}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-1 w-full py-2 text-[17px] text-ios-blue active:opacity-60"
+        >
+          Cancel
+        </button>
+
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            className={`mt-1 w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
+              confirmingDelete ? 'bg-[#ff3b30] text-white' : 'bg-[#ff3b30]/10 text-[#ff3b30]'
+            }`}
+          >
+            {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Category'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsTab() {
   // NOTE: db.accounts has no 'createdAt' index (see db.ts) — Dexie's orderBy()
   // throws on non-indexed fields, so sort the small account list in JS instead.
@@ -52,6 +192,7 @@ export default function SettingsTab() {
   const categories = useLiveQuery(() => db.categories.orderBy('sortOrder').toArray(), [])
   const rules = useLiveQuery(() => db.scheduled_rules.orderBy('nextRunAt').toArray(), [])
   const fileRef = useRef<HTMLInputElement>(null)
+  const [catModal, setCatModal] = useState<CatModalState | null>(null)
 
   const addAccount = async () => {
     const name = window.prompt('Account name:')
@@ -66,20 +207,6 @@ export default function SettingsTab() {
       isArchived: false,
       createdAt: now,
       updatedAt: now,
-    })
-  }
-
-  const addCategory = async () => {
-    const name = window.prompt('Category name:')
-    if (!name?.trim()) return
-    const isIncome = window.confirm('Category kind:\n\nOK = Income\nCancel = Expense')
-    const last = await db.categories.orderBy('sortOrder').last()
-    await db.categories.add({
-      name: name.trim(),
-      kind: isIncome ? 'income' : 'expense',
-      color: isIncome ? '#30d158' : '#ff9f0a',
-      sortOrder: (last?.sortOrder ?? 0) + 1,
-      isArchived: false,
     })
   }
 
@@ -166,7 +293,12 @@ export default function SettingsTab() {
       <Section title="Categories">
         <div className="divide-y divide-neutral-200/70">
           {(categories ?? []).map((c) => (
-            <div key={c.id} className="flex items-center gap-3 px-4 py-2.5">
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => c.id !== undefined && setCatModal({ mode: 'edit', category: c })}
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-neutral-100"
+            >
               <Dot color={c.color} letter={c.name[0].toUpperCase()} />
               <span className="min-w-0 flex-1 truncate text-[16px] text-neutral-900">{c.name}</span>
               <span
@@ -178,9 +310,9 @@ export default function SettingsTab() {
               >
                 {c.kind === 'income' ? 'Income' : 'Expense'}
               </span>
-            </div>
+            </button>
           ))}
-          <AddRow label="Add Category" onClick={addCategory} />
+          <AddRow label="Add Category" onClick={() => setCatModal({ mode: 'add' })} />
         </div>
       </Section>
 
@@ -252,6 +384,15 @@ export default function SettingsTab() {
       <p className="px-1 text-center text-[12px] text-neutral-400">
         PocketLedger · all data stays on this device
       </p>
+
+      {/* Category add/edit dialog */}
+      {catModal !== null && (
+        <CategoryModal
+          key={catModal.mode === 'edit' ? catModal.category.id : 'new'}
+          initial={catModal}
+          onClose={() => setCatModal(null)}
+        />
+      )}
     </div>
   )
 }

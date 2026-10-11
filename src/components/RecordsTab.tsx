@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db, type Account, type Category, type Transaction } from '../db'
+import { useUIStore } from '../store'
 import { dayKey, dayLabel, formatMoney, timeLabel } from '../lib/format'
 
 function amountStyle(kind: Transaction['kind']): string {
@@ -63,6 +64,7 @@ export default function RecordsTab() {
   const txns = useLiveQuery(() => db.transactions.orderBy('occurredAt').reverse().toArray(), [])
   const accounts = useLiveQuery(() => db.accounts.toArray(), [])
   const categories = useLiveQuery(() => db.categories.toArray(), [])
+  const openEditTxn = useUIStore((s) => s.openEditTxn)
 
   const accountById = useMemo(
     () => new Map((accounts ?? []).map((a) => [a.id as number, a])),
@@ -111,13 +113,19 @@ export default function RecordsTab() {
           </h3>
           <div className="divide-y divide-neutral-200/70 overflow-hidden rounded-2xl bg-white shadow-sm">
             {g.items.map((t) => (
-              <Row
+              <button
                 key={t.id}
-                txn={t}
-                account={accountById.get(t.accountId)}
-                category={t.categoryId !== undefined ? categoryById.get(t.categoryId) : undefined}
-                toAccount={t.toAccountId !== undefined ? accountById.get(t.toAccountId) : undefined}
-              />
+                type="button"
+                onClick={() => t.id !== undefined && openEditTxn(t.id)}
+                className="block w-full text-left"
+              >
+                <Row
+                  txn={t}
+                  account={accountById.get(t.accountId)}
+                  category={t.categoryId !== undefined ? categoryById.get(t.categoryId) : undefined}
+                  toAccount={t.toAccountId !== undefined ? accountById.get(t.toAccountId) : undefined}
+                />
+              </button>
             ))}
           </div>
         </section>
