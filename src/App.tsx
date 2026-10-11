@@ -6,6 +6,7 @@ import AddTransactionSheet from './components/AddTransactionSheet'
 import { useUIStore } from './store'
 import { runAutoSync } from './lib/scheduler'
 import { parseSMS } from './lib/sms'
+import { toMinorUnits } from './lib/format'
 
 // Module flag: the sync must run exactly once per page load, even under
 // React StrictMode's double-effect invocation in dev.
@@ -49,6 +50,40 @@ function useSMSReceiver() {
       amount: (parsed.amount / 100).toFixed(2),
       note: parsed.merchant,
       kind: parsed.kind,
+    })
+    openAddTxn()
+  }, [openAddTxn, setTxnPrefill])
+}
+
+/**
+ * Apple Wallet automation bridge: an iOS Shortcut triggered by an Apple Pay /
+ * Octopus tap opens the app with clean variables, e.g.
+ *   ?amount=120.50&merchant=Starbucks
+ * Pre-fills the sheet as an expense and clears the params immediately so a
+ * refresh never re-triggers it. The ?sms_text= flow above is untouched.
+ */
+function useWalletURLReceiver() {
+  const openAddTxn = useUIStore((s) => s.openAddTxn)
+  const setTxnPrefill = useUIStore((s) => s.setTxnPrefill)
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const amountRaw = params.get('amount')
+    if (!amountRaw) return
+    const merchantRaw = params.get('merchant')
+
+    // Clear immediately — before parsing — so refresh is always safe.
+    params.delete('amount')
+    params.delete('merchant')
+    const rest = params.toString()
+    window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+
+    const minor = toMinorUnits(amountRaw)
+    if (minor === null) return
+    setTxnPrefill({
+      amount: (minor / 100).toFixed(2),
+      note: (merchantRaw ?? '').trim(),
+      kind: 'expense',
     })
     openAddTxn()
   }, [openAddTxn, setTxnPrefill])
@@ -145,6 +180,7 @@ export default function App() {
 
   useAutoSync()
   useSMSReceiver()
+  useWalletURLReceiver()
 
   return (
     <div className="flex h-dvh justify-center bg-neutral-200 font-system text-neutral-900 antialiased">

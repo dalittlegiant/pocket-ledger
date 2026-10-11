@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type Category } from '../db'
+import { db, type Account, type AccountType, type Category } from '../db'
 import { wipeAllData } from '../seed'
 import { advanceDate } from '../lib/scheduler'
 import { formatMoney, toMinorUnits } from '../lib/format'
@@ -182,6 +182,173 @@ function CategoryModal({ initial, onClose }: { initial: CatModalState; onClose: 
   )
 }
 
+const ACCOUNT_TYPES: { id: AccountType; label: string; color: string }[] = [
+  { id: 'cash', label: 'Cash', color: '#30d158' },
+  { id: 'bank', label: 'Bank', color: '#0a84ff' },
+  { id: 'credit', label: 'Credit Card', color: '#ff9f0a' },
+  { id: 'ewallet', label: 'E-Wallet', color: '#bf5af2' },
+  { id: 'other', label: 'Other', color: '#8e8e93' },
+]
+
+function accountTypeLabel(type: AccountType): string {
+  return ACCOUNT_TYPES.find((t) => t.id === type)?.label ?? type
+}
+
+type AccountModalState = { mode: 'add' } | { mode: 'edit'; account: Account }
+
+/**
+ * iOS-style centered dialog for adding / editing an account.
+ * Same premium treatment as the category dialog.
+ */
+function AccountModal({ initial, onClose }: { initial: AccountModalState; onClose: () => void }) {
+  const isEdit = initial.mode === 'edit'
+  const [name, setName] = useState(isEdit ? initial.account.name : '')
+  const [type, setType] = useState<AccountType>(isEdit ? initial.account.type : 'cash')
+  const [error, setError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('Please enter an account name.')
+      return
+    }
+    const color = ACCOUNT_TYPES.find((t) => t.id === type)?.color ?? '#8e8e93'
+    setSaving(true)
+    try {
+      if (isEdit) {
+        await db.accounts.update(initial.account.id as number, {
+          name: trimmed,
+          type,
+          color,
+          updatedAt: Date.now(),
+        })
+      } else {
+        const now = Date.now()
+        await db.accounts.add({
+          name: trimmed,
+          type,
+          currency: 'HKD',
+          balance: 0,
+          color,
+          isArchived: false,
+          createdAt: now,
+          updatedAt: now,
+        })
+      }
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!isEdit) return
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    const id = initial.account.id as number
+    // accountId / toAccountId are indexed on transactions and accountId is
+    // indexed on scheduled_rules — safe to query directly.
+    const [usedAsSource, usedAsDest, usedByRules] = await Promise.all([
+      db.transactions.where('accountId').equals(id).count(),
+      db.transactions.where('toAccountId').equals(id).count(),
+      db.scheduled_rules.where('accountId').equals(id).count(),
+    ])
+    const total = usedAsSource + usedAsDest + usedByRules
+    if (total > 0) {
+      setError(
+        `This account is used by ${total} transaction${total === 1 ? '' : 's'}. ` +
+          `Reassign or delete ${total === 1 ? 'it' : 'them'} first.`,
+      )
+      setConfirmingDelete(false)
+      return
+    }
+    await db.accounts.delete(id)
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+        <h2 className="text-center text-[17px] font-semibold text-neutral-900">
+          {isEdit ? 'Edit Account' : 'New Account'}
+        </h2>
+
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            setError(null)
+          }}
+          placeholder="Account name"
+          maxLength={40}
+          autoFocus
+          className="mt-4 w-full rounded-xl bg-neutral-100 px-4 py-3 text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
+        />
+
+        {/* Account type pills */}
+        <div className="mt-3 flex flex-wrap gap-2">
+          {ACCOUNT_TYPES.map((t) => {
+            const selected = type === t.id
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setType(t.id)}
+                className={`flex items-center gap-2 rounded-full border px-3.5 py-2 text-sm font-medium transition-all active:scale-95 ${
+                  selected
+                    ? 'border-ios-blue bg-ios-blue/10 text-neutral-900'
+                    : 'border-neutral-200 bg-white text-neutral-600'
+                }`}
+              >
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: t.color }} />
+                {t.label}
+                {selected && <span className="text-ios-blue">✓</span>}
+              </button>
+            )
+          })}
+        </div>
+
+        {error && <p className="mt-2 text-[13px] text-[#ff3b30]">{error}</p>}
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || name.trim().length === 0}
+          className={`mt-4 w-full rounded-2xl py-3 text-[17px] font-semibold text-white transition-all active:scale-[0.98] ${
+            saving || name.trim().length === 0 ? 'bg-neutral-300' : 'bg-ios-blue'
+          }`}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-1 w-full py-2 text-[17px] text-ios-blue active:opacity-60"
+        >
+          Cancel
+        </button>
+
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            className={`mt-1 w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
+              confirmingDelete ? 'bg-[#ff3b30] text-white' : 'bg-[#ff3b30]/10 text-[#ff3b30]'
+            }`}
+          >
+            {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Account'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsTab() {
   // NOTE: db.accounts has no 'createdAt' index (see db.ts) — Dexie's orderBy()
   // throws on non-indexed fields, so sort the small account list in JS instead.
@@ -193,22 +360,7 @@ export default function SettingsTab() {
   const rules = useLiveQuery(() => db.scheduled_rules.orderBy('nextRunAt').toArray(), [])
   const fileRef = useRef<HTMLInputElement>(null)
   const [catModal, setCatModal] = useState<CatModalState | null>(null)
-
-  const addAccount = async () => {
-    const name = window.prompt('Account name:')
-    if (!name?.trim()) return
-    const now = Date.now()
-    await db.accounts.add({
-      name: name.trim(),
-      type: 'other',
-      currency: 'HKD',
-      balance: 0,
-      color: '#8e8e93',
-      isArchived: false,
-      createdAt: now,
-      updatedAt: now,
-    })
-  }
+  const [accountModal, setAccountModal] = useState<AccountModalState | null>(null)
 
   const wipe = async () => {
     const confirmed = window.confirm(
@@ -279,13 +431,20 @@ export default function SettingsTab() {
       <Section title="Accounts">
         <div className="divide-y divide-neutral-200/70">
           {(accounts ?? []).map((a) => (
-            <div key={a.id} className="flex items-center gap-3 px-4 py-2.5">
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => a.id !== undefined && setAccountModal({ mode: 'edit', account: a })}
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-neutral-100"
+            >
               <Dot color={a.color} letter={a.name[0].toUpperCase()} />
               <span className="min-w-0 flex-1 truncate text-[16px] text-neutral-900">{a.name}</span>
-              <span className="shrink-0 text-[13px] capitalize text-neutral-400">{a.type}</span>
-            </div>
+              <span className="shrink-0 text-[13px] text-neutral-400">
+                {accountTypeLabel(a.type)}
+              </span>
+            </button>
           ))}
-          <AddRow label="Add Account" onClick={addAccount} />
+          <AddRow label="Add Account" onClick={() => setAccountModal({ mode: 'add' })} />
         </div>
       </Section>
 
@@ -391,6 +550,15 @@ export default function SettingsTab() {
           key={catModal.mode === 'edit' ? catModal.category.id : 'new'}
           initial={catModal}
           onClose={() => setCatModal(null)}
+        />
+      )}
+
+      {/* Account add/edit dialog */}
+      {accountModal !== null && (
+        <AccountModal
+          key={accountModal.mode === 'edit' ? accountModal.account.id : 'new'}
+          initial={accountModal}
+          onClose={() => setAccountModal(null)}
         />
       )}
     </div>

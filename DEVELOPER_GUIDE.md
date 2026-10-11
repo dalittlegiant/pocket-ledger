@@ -264,6 +264,13 @@ segmented control** (`AddTransactionSheet` applies `setKind(prefill.kind)`).
 Returns `null` on no match (the app then does nothing — no sheet, no error). To add
 a new bank, append to `RULES` and keep the `parseSMS` return contract.
 
+**Apple Wallet bridge** (`useWalletURLReceiver` in `App.tsx`): a separate hook that
+runs alongside the SMS receiver. An iOS Shortcut fired by an Apple Pay / Octopus tap
+opens the app with clean variables — `?amount=120.50&merchant=Starbucks` — which are
+parsed via `toMinorUnits()`, pre-filled into the sheet as an **expense** (amount +
+merchant note), and cleared with `history.replaceState` immediately, exactly like the
+SMS flow. The `?sms_text=` logic is untouched; both hooks coexist.
+
 **Setting up the iPhone Shortcut** (for the owner / end users):
 1. Shortcuts app → **+** → add action **"URL-Encode"**, input = **Shortcut Input**.
 2. Add action **"Open URLs"**: `https://<username>.github.io/pocket-ledger/?sms_text=`
