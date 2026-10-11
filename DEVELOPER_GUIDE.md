@@ -285,9 +285,12 @@ opens the app with clean variables — `?amount=120.50&merchant=Starbucks&accoun
 The `account` value is resolved by `resolveWalletAccount()`: case-insensitive partial
 match against `db.accounts` in either direction, and when nothing matches a new
 account is auto-created (type `'other'`) so new Wallet cards work with zero setup —
-never a random fallback. The resolved `accountId` travels in the Zustand `txnPrefill`
-and pre-selects the account pill in the sheet. Params are cleared with
-`history.replaceState` immediately, exactly like the SMS flow. The `?sms_text=` logic
+never a random fallback. **Octopus top-up detection:** when the `merchant` string
+contains "octopus" (case-insensitive), the hook routes the transaction as a
+`transfer` instead of an expense — `fromAccountId` is the resolved `account`,
+`toAccountId` is the Octopus account (resolved/created the same way) — so top-ups
+don't inflate spending totals. The sheet's prefill setup honors
+`prefill.toAccountId` (previously it always reset it). The `?sms_text=` logic
 is untouched; both hooks coexist.
 
 **Setting up the iPhone Shortcut** (for the owner / end users):

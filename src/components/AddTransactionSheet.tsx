@@ -125,7 +125,7 @@ export default function AddTransactionSheet() {
       setNote(prefill.note)
       setAccountId(prefill.accountId)
       setCategoryId(undefined)
-      setToAccountId(undefined)
+      setToAccountId(prefill.toAccountId)
       setDateStr(toDateInputValue(Date.now()))
       useUIStore.getState().setTxnPrefill(null)
       return

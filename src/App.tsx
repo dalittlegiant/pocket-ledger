@@ -90,12 +90,26 @@ function useWalletURLReceiver() {
     // must be fully populated before the sheet's setup effect reads it.
     void (async () => {
       const accountId = await resolveWalletAccount(accountRaw)
-      setTxnPrefill({
-        amount: (minor / 100).toFixed(2),
-        note: (merchantRaw ?? '').trim(),
-        kind: 'expense',
-        accountId,
-      })
+      const note = (merchantRaw ?? '').trim()
+      // Octopus top-up (credit card → Octopus) is a transfer, not an expense —
+      // routing it as an expense would inflate spending totals.
+      if (note.toLowerCase().includes('octopus')) {
+        const octopusId = await resolveWalletAccount('Octopus')
+        setTxnPrefill({
+          amount: (minor / 100).toFixed(2),
+          note,
+          kind: 'transfer',
+          accountId,
+          toAccountId: octopusId,
+        })
+      } else {
+        setTxnPrefill({
+          amount: (minor / 100).toFixed(2),
+          note,
+          kind: 'expense',
+          accountId,
+        })
+      }
       openAddTxn()
     })()
   }, [openAddTxn, setTxnPrefill])
