@@ -119,11 +119,11 @@ export default function AddTransactionSheet() {
       }
     }
     if (prefill) {
-      // One-shot prefill from the iOS Shortcuts SMS bridge.
+      // One-shot prefill from the iOS Shortcuts bridges (SMS / Apple Wallet).
       setKind(prefill.kind)
       setAmount(prefill.amount)
       setNote(prefill.note)
-      setAccountId(undefined)
+      setAccountId(prefill.accountId)
       setCategoryId(undefined)
       setToAccountId(undefined)
       setDateStr(toDateInputValue(Date.now()))

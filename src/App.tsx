@@ -4,6 +4,7 @@ import ChartsTab from './components/ChartsTab'
 import SettingsTab from './components/SettingsTab'
 import AddTransactionSheet from './components/AddTransactionSheet'
 import { useUIStore } from './store'
+import { db } from './db'
 import { runAutoSync } from './lib/scheduler'
 import { parseSMS } from './lib/sms'
 import { toMinorUnits } from './lib/format'
@@ -58,9 +59,10 @@ function useSMSReceiver() {
 /**
  * Apple Wallet automation bridge: an iOS Shortcut triggered by an Apple Pay /
  * Octopus tap opens the app with clean variables, e.g.
- *   ?amount=120.50&merchant=Starbucks
- * Pre-fills the sheet as an expense and clears the params immediately so a
- * refresh never re-triggers it. The ?sms_text= flow above is untouched.
+ *   ?amount=120.50&merchant=Starbucks&account=Octopus
+ * Pre-fills the sheet as an expense (amount + merchant note + resolved account)
+ * and clears the params immediately so a refresh never re-triggers it.
+ * The ?sms_text= flow above is untouched.
  */
 function useWalletURLReceiver() {
   const openAddTxn = useUIStore((s) => s.openAddTxn)
@@ -70,23 +72,65 @@ function useWalletURLReceiver() {
     const params = new URLSearchParams(window.location.search)
     const amountRaw = params.get('amount')
     if (!amountRaw) return
+    // URLSearchParams.get() already URL-decodes ("Red%20Card" → "Red Card").
     const merchantRaw = params.get('merchant')
+    const accountRaw = params.get('account')
 
     // Clear immediately — before parsing — so refresh is always safe.
     params.delete('amount')
     params.delete('merchant')
+    params.delete('account')
     const rest = params.toString()
     window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
 
     const minor = toMinorUnits(amountRaw)
     if (minor === null) return
-    setTxnPrefill({
-      amount: (minor / 100).toFixed(2),
-      note: (merchantRaw ?? '').trim(),
-      kind: 'expense',
-    })
-    openAddTxn()
+
+    // Resolve the account first (async), then open the sheet — the prefill
+    // must be fully populated before the sheet's setup effect reads it.
+    void (async () => {
+      const accountId = await resolveWalletAccount(accountRaw)
+      setTxnPrefill({
+        amount: (minor / 100).toFixed(2),
+        note: (merchantRaw ?? '').trim(),
+        kind: 'expense',
+        accountId,
+      })
+      openAddTxn()
+    })()
   }, [openAddTxn, setTxnPrefill])
+}
+
+/**
+ * Matches a Wallet-provided account name against db.accounts (case-insensitive,
+ * partial in either direction). When nothing matches, creates the account on
+ * the fly (type 'other') so new Wallet cards work with zero setup.
+ * Returns undefined when no account name was provided.
+ */
+async function resolveWalletAccount(raw: string | null): Promise<number | undefined> {
+  const needle = (raw ?? '').trim()
+  if (!needle) return undefined
+  const lowered = needle.toLowerCase()
+
+  const accounts = await db.accounts.toArray()
+  const match = accounts.find((a) => {
+    const name = a.name.trim().toLowerCase()
+    return name.includes(lowered) || lowered.includes(name)
+  })
+  if (match?.id !== undefined) return match.id
+
+  const now = Date.now()
+  const id = await db.accounts.add({
+    name: needle,
+    type: 'other',
+    currency: 'HKD',
+    balance: 0,
+    color: '#8e8e93',
+    isArchived: false,
+    createdAt: now,
+    updatedAt: now,
+  })
+  return id as number
 }
 
 type TabId = 'records' | 'charts' | 'settings'
