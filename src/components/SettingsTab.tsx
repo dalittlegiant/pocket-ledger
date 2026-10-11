@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { db, type Account, type AccountType, type Category } from '../db'
+import { db, type Account, type AccountType, type Category, type ScheduledRule } from '../db'
 import { wipeAllData } from '../seed'
 import { advanceDate } from '../lib/scheduler'
 import { formatMoney, toMinorUnits } from '../lib/format'
@@ -250,11 +250,12 @@ function AccountModal({ initial, onClose }: { initial: AccountModalState; onClos
       return
     }
     const id = initial.account.id as number
-    // accountId / toAccountId are indexed on transactions and accountId is
-    // indexed on scheduled_rules — safe to query directly.
+    // accountId is indexed on both tables; toAccountId is NOT indexed on
+    // transactions (see db.ts) — Dexie's where() throws on non-indexed
+    // fields, so filter those in JS instead.
     const [usedAsSource, usedAsDest, usedByRules] = await Promise.all([
       db.transactions.where('accountId').equals(id).count(),
-      db.transactions.where('toAccountId').equals(id).count(),
+      db.transactions.filter((t) => t.toAccountId === id).count(),
       db.scheduled_rules.where('accountId').equals(id).count(),
     ])
     const total = usedAsSource + usedAsDest + usedByRules
@@ -349,6 +350,122 @@ function AccountModal({ initial, onClose }: { initial: AccountModalState; onClos
   )
 }
 
+/**
+ * iOS-style centered dialog for editing a scheduled transaction
+ * (name + amount) with the same two-step delete design.
+ * Rule deletions need no guard — generated transactions are independent copies.
+ */
+function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void }) {
+  const [name, setName] = useState(rule.note ?? '')
+  const [amountStr, setAmountStr] = useState((rule.amount / 100).toFixed(2))
+  const [error, setError] = useState<string | null>(null)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('Please enter a name.')
+      return
+    }
+    const minor = toMinorUnits(amountStr)
+    if (minor === null) {
+      setError('Please enter a valid amount.')
+      return
+    }
+    setSaving(true)
+    try {
+      await db.scheduled_rules.update(rule.id as number, { note: trimmed, amount: minor })
+      onClose()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true)
+      return
+    }
+    await db.scheduled_rules.delete(rule.id as number)
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
+        <h2 className="text-center text-[17px] font-semibold text-neutral-900">
+          Edit Scheduled Transaction
+        </h2>
+
+        <input
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value)
+            setError(null)
+          }}
+          placeholder="Name (e.g. Rent)"
+          maxLength={40}
+          autoFocus
+          className="mt-4 w-full rounded-xl bg-neutral-100 px-4 py-3 text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-ios-blue/40"
+        />
+
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-neutral-100 px-4 py-3 focus-within:ring-2 focus-within:ring-ios-blue/40">
+          <span className="text-[16px] font-medium text-neutral-400">HK$</span>
+          <input
+            value={amountStr}
+            onChange={(e) => {
+              setAmountStr(e.target.value)
+              setError(null)
+            }}
+            inputMode="decimal"
+            placeholder="0.00"
+            className="w-full bg-transparent text-[16px] text-neutral-900 placeholder:text-neutral-400 focus:outline-none"
+          />
+        </div>
+        <p className="mt-2 px-1 text-[12px] text-neutral-400">
+          Repeats monthly · next{' '}
+          {new Date(rule.nextRunAt).toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+          })}
+        </p>
+
+        {error && <p className="mt-2 text-[13px] text-[#ff3b30]">{error}</p>}
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving || name.trim().length === 0}
+          className={`mt-4 w-full rounded-2xl py-3 text-[17px] font-semibold text-white transition-all active:scale-[0.98] ${
+            saving || name.trim().length === 0 ? 'bg-neutral-300' : 'bg-ios-blue'
+          }`}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-1 w-full py-2 text-[17px] text-ios-blue active:opacity-60"
+        >
+          Cancel
+        </button>
+
+        <button
+          type="button"
+          onClick={handleDelete}
+          className={`mt-1 w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
+            confirmingDelete ? 'bg-[#ff3b30] text-white' : 'bg-[#ff3b30]/10 text-[#ff3b30]'
+          }`}
+        >
+          {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Scheduled Transaction'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsTab() {
   // NOTE: db.accounts has no 'createdAt' index (see db.ts) — Dexie's orderBy()
   // throws on non-indexed fields, so sort the small account list in JS instead.
@@ -361,6 +478,7 @@ export default function SettingsTab() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [catModal, setCatModal] = useState<CatModalState | null>(null)
   const [accountModal, setAccountModal] = useState<AccountModalState | null>(null)
+  const [ruleModal, setRuleModal] = useState<ScheduledRule | null>(null)
 
   const wipe = async () => {
     const confirmed = window.confirm(
@@ -479,7 +597,12 @@ export default function SettingsTab() {
       <Section title="Scheduled Transactions">
         <div className="divide-y divide-neutral-200/70">
           {(rules ?? []).map((r) => (
-            <div key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => setRuleModal(r)}
+              className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-neutral-100"
+            >
               <Dot color="#bf5af2" letter={(r.note ?? 'R')[0].toUpperCase()} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[16px] text-neutral-900">{r.note ?? 'Recurring'}</p>
@@ -494,7 +617,7 @@ export default function SettingsTab() {
               <span className="shrink-0 text-[16px] font-semibold tabular-nums text-neutral-900">
                 {formatMoney(r.amount)}
               </span>
-            </div>
+            </button>
           ))}
           <AddRow label="Add Monthly Expense" onClick={addRule} />
         </div>
@@ -560,6 +683,11 @@ export default function SettingsTab() {
           initial={accountModal}
           onClose={() => setAccountModal(null)}
         />
+      )}
+
+      {/* Scheduled transaction edit dialog */}
+      {ruleModal !== null && (
+        <RuleModal key={ruleModal.id} rule={ruleModal} onClose={() => setRuleModal(null)} />
       )}
     </div>
   )
