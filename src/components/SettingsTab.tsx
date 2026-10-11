@@ -351,13 +351,19 @@ function AccountModal({ initial, onClose }: { initial: AccountModalState; onClos
 }
 
 /**
- * iOS-style centered dialog for editing a scheduled transaction
- * (name + amount) with the same two-step delete design.
- * Rule deletions need no guard — generated transactions are independent copies.
+ * iOS-style centered dialog for creating / editing a scheduled transaction.
+ * Add mode starts empty with no delete button; edit mode pre-fills name/amount
+ * and offers the two-step delete. Rule deletions need no guard — generated
+ * transactions are independent copies.
  */
-function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void }) {
-  const [name, setName] = useState(rule.note ?? '')
-  const [amountStr, setAmountStr] = useState((rule.amount / 100).toFixed(2))
+type RuleModalState = { mode: 'add' } | { mode: 'edit'; rule: ScheduledRule }
+
+function RuleModal({ initial, onClose }: { initial: RuleModalState; onClose: () => void }) {
+  const isEdit = initial.mode === 'edit'
+  const [name, setName] = useState(isEdit ? (initial.rule.note ?? '') : '')
+  const [amountStr, setAmountStr] = useState(
+    isEdit ? (initial.rule.amount / 100).toFixed(2) : '0.00',
+  )
   const [error, setError] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -375,7 +381,31 @@ function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void
     }
     setSaving(true)
     try {
-      await db.scheduled_rules.update(rule.id as number, { note: trimmed, amount: minor })
+      if (isEdit) {
+        await db.scheduled_rules.update(initial.rule.id as number, {
+          note: trimmed,
+          amount: minor,
+        })
+      } else {
+        const allAccounts = await db.accounts.toArray()
+        const firstAccount = allAccounts.sort((a, b) => a.createdAt - b.createdAt)[0]
+        if (!firstAccount?.id) {
+          setError('Add an account first.')
+          return
+        }
+        const now = Date.now()
+        await db.scheduled_rules.add({
+          accountId: firstAccount.id,
+          kind: 'expense',
+          amount: minor,
+          note: trimmed,
+          frequency: 'monthly',
+          interval: 1,
+          nextRunAt: advanceDate(now, 'monthly', 1),
+          isActive: true,
+          createdAt: now,
+        })
+      }
       onClose()
     } finally {
       setSaving(false)
@@ -383,11 +413,12 @@ function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void
   }
 
   const handleDelete = async () => {
+    if (!isEdit) return
     if (!confirmingDelete) {
       setConfirmingDelete(true)
       return
     }
-    await db.scheduled_rules.delete(rule.id as number)
+    await db.scheduled_rules.delete(initial.rule.id as number)
     onClose()
   }
 
@@ -396,7 +427,7 @@ function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
       <div className="relative w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
         <h2 className="text-center text-[17px] font-semibold text-neutral-900">
-          Edit Scheduled Transaction
+          {isEdit ? 'Edit Scheduled Transaction' : 'New Scheduled Transaction'}
         </h2>
 
         <input
@@ -425,11 +456,12 @@ function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void
           />
         </div>
         <p className="mt-2 px-1 text-[12px] text-neutral-400">
-          Repeats monthly · next{' '}
-          {new Date(rule.nextRunAt).toLocaleDateString('en-US', {
-            month: 'short',
-            day: 'numeric',
-          })}
+          Repeats monthly
+          {isEdit &&
+            ` · next ${new Date(initial.rule.nextRunAt).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+            })}`}
         </p>
 
         {error && <p className="mt-2 text-[13px] text-[#ff3b30]">{error}</p>}
@@ -452,15 +484,17 @@ function RuleModal({ rule, onClose }: { rule: ScheduledRule; onClose: () => void
           Cancel
         </button>
 
-        <button
-          type="button"
-          onClick={handleDelete}
-          className={`mt-1 w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
-            confirmingDelete ? 'bg-[#ff3b30] text-white' : 'bg-[#ff3b30]/10 text-[#ff3b30]'
-          }`}
-        >
-          {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Scheduled Transaction'}
-        </button>
+        {isEdit && (
+          <button
+            type="button"
+            onClick={handleDelete}
+            className={`mt-1 w-full rounded-2xl py-3 text-[17px] font-semibold transition-all active:scale-[0.98] ${
+              confirmingDelete ? 'bg-[#ff3b30] text-white' : 'bg-[#ff3b30]/10 text-[#ff3b30]'
+            }`}
+          >
+            {confirmingDelete ? 'Tap again to confirm delete' : 'Delete Scheduled Transaction'}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -478,7 +512,7 @@ export default function SettingsTab() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [catModal, setCatModal] = useState<CatModalState | null>(null)
   const [accountModal, setAccountModal] = useState<AccountModalState | null>(null)
-  const [ruleModal, setRuleModal] = useState<ScheduledRule | null>(null)
+  const [ruleModal, setRuleModal] = useState<RuleModalState | null>(null)
 
   const wipe = async () => {
     const confirmed = window.confirm(
@@ -508,35 +542,6 @@ export default function SettingsTab() {
     } catch (e) {
       window.alert('Import failed: ' + (e instanceof Error ? e.message : 'unknown error'))
     }
-  }
-
-  const addRule = async () => {
-    const name = window.prompt('Recurring expense name (e.g. Rent):')
-    if (!name?.trim()) return
-    const amountInput = window.prompt(`Monthly amount for "${name.trim()}" (e.g. 120.00):`)
-    const minor = amountInput ? toMinorUnits(amountInput) : null
-    if (minor === null) {
-      window.alert('Invalid amount — rule not created.')
-      return
-    }
-    const allAccounts = await db.accounts.toArray()
-    const firstAccount = allAccounts.sort((a, b) => a.createdAt - b.createdAt)[0]
-    if (!firstAccount?.id) {
-      window.alert('Add an account first.')
-      return
-    }
-    const now = Date.now()
-    await db.scheduled_rules.add({
-      accountId: firstAccount.id,
-      kind: 'expense',
-      amount: minor,
-      note: name.trim(),
-      frequency: 'monthly',
-      interval: 1,
-      nextRunAt: advanceDate(now, 'monthly', 1),
-      isActive: true,
-      createdAt: now,
-    })
   }
 
   if (accounts === undefined || categories === undefined || rules === undefined) {
@@ -600,7 +605,7 @@ export default function SettingsTab() {
             <button
               key={r.id}
               type="button"
-              onClick={() => setRuleModal(r)}
+              onClick={() => setRuleModal({ mode: 'edit', rule: r })}
               className="flex w-full items-center gap-3 px-4 py-2.5 text-left active:bg-neutral-100"
             >
               <Dot color="#bf5af2" letter={(r.note ?? 'R')[0].toUpperCase()} />
@@ -619,7 +624,7 @@ export default function SettingsTab() {
               </span>
             </button>
           ))}
-          <AddRow label="Add Monthly Expense" onClick={addRule} />
+          <AddRow label="Add Monthly Expense" onClick={() => setRuleModal({ mode: 'add' })} />
         </div>
       </Section>
 
@@ -685,9 +690,13 @@ export default function SettingsTab() {
         />
       )}
 
-      {/* Scheduled transaction edit dialog */}
+      {/* Scheduled transaction add/edit dialog */}
       {ruleModal !== null && (
-        <RuleModal key={ruleModal.id} rule={ruleModal} onClose={() => setRuleModal(null)} />
+        <RuleModal
+          key={ruleModal.mode === 'edit' ? ruleModal.rule.id : 'new'}
+          initial={ruleModal}
+          onClose={() => setRuleModal(null)}
+        />
       )}
     </div>
   )
